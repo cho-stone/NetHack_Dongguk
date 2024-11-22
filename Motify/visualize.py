@@ -133,7 +133,7 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
             for i in range(6) :
                 policys.append(actor_critics[i](obs_torch, rnn_states))
 
-            n = random.randrange(0,5)
+            n = random.randrange(0,6)
             # sample actions from the distribution by default
             actions = policys[n].actions
             actions = actions.cpu().numpy()

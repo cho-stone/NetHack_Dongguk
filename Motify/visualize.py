@@ -7,6 +7,7 @@ import gym
 import numpy as np
 import scipy
 import torch
+import random
 
 # Needs to be imported to register models and envs
 import rl_baseline.tasks_nle
@@ -45,20 +46,23 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
     # but we can wrap a single-agent env into one of these like this
     env = MultiAgentWrapper(env)
 
-    # Create actor critic
-    actor_critic = create_actor_critic(
-        cfg, 
-        env.observation_space, 
-        env.action_space
-    )
-    device = torch.device('cpu' if cfg.device == 'cpu' else 'cuda')
-    actor_critic.model_to_device(device)
+    actor_critics = []
+    for i in range(6) :
+        # Create actor critic
+        actor_critic = create_actor_critic(
+            cfg, 
+            env.observation_space, 
+            env.action_space
+        )
+        device = torch.device('cpu' if cfg.device == 'cpu' else 'cuda')
+        actor_critic.model_to_device(device)
 
-    # Load actor critic
-    checkpoints = LearnerWorker.get_checkpoints(LearnerWorker.checkpoint_dir(
-                                                cfg, cfg.policy_index))
-    checkpoint_dict = LearnerWorker.load_checkpoint(checkpoints, device)
-    actor_critic.load_state_dict(checkpoint_dict['model'])
+        # Load actor critic
+        checkpoints = LearnerWorker.get_checkpoints(LearnerWorker.checkpoint_dir(cfg, i))
+        checkpoint_dict = LearnerWorker.load_checkpoint(checkpoints, device)
+        actor_critic.load_state_dict(checkpoint_dict['model'])
+        actor_critics.append(actor_critic)
+    
 
     # Create and potentially load a reward model
     rew_checkpoints = LearnerWorker.get_checkpoints(os.path.join(cfg.reward_dir,
@@ -125,13 +129,15 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
             for key, x in obs_torch.items():
                 obs_torch[key] = torch.from_numpy(x).to(device).float()
 
-            policy_outputs = actor_critic(obs_torch, 
-                                          rnn_states)
+            policys = []
+            for i in range(6) :
+                policys.append(actor_critics[i](obs_torch, rnn_states))
 
+            n = random.randrange(0,5)
             # sample actions from the distribution by default
-            actions = policy_outputs.actions
+            actions = policys[n].actions
             actions = actions.cpu().numpy()
-            rnn_states = policy_outputs.rnn_states
+            rnn_states = policys[n].rnn_states
 
             obs, rew, done, infos = env.step(actions)
 

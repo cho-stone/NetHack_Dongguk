@@ -46,7 +46,9 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
     # but we can wrap a single-agent env into one of these like this
     env = MultiAgentWrapper(env)
 
+    # 6개의 모델을 담기위한 actor_critics배열 선언
     actor_critics = []
+    # 반복하여 하나씩 배열에 로드
     for i in range(6) :
         # Create actor critic
         actor_critic = create_actor_critic(
@@ -129,12 +131,17 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
             for key, x in obs_torch.items():
                 obs_torch[key] = torch.from_numpy(x).to(device).float()
 
+            # policy_output을 담기위한 배열 선언
             policys = []
+            # 각 model의 policy_output 담기
             for i in range(6) :
                 policys.append(actor_critics[i](obs_torch, rnn_states))
 
+            # 랜덤으로 행동을 선택하기 위한 변수
             n = random.randrange(0,6)
+
             # sample actions from the distribution by default
+            # 랜덤으로 선택된 action을 담아서 실행
             actions = policys[n].actions
             actions = actions.cpu().numpy()
             rnn_states = policys[n].rnn_states

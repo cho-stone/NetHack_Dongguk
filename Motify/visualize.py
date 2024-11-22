@@ -195,7 +195,8 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
                 print(f"Timestep: {num_frames} Reward: {rew[0]:.3f} "
                       f"Return: {episode_reward[0]:.3f} "
                       f"Intrinsic reward: {int_reward:.3f} "
-                      f"Norm Intrinsic reward: {norm_int_reward:.3f}")
+                      f"Norm Intrinsic reward: {norm_int_reward:.3f} "
+                      f"action select: {n}      ")
 
                 # Render environment
                 env.render()

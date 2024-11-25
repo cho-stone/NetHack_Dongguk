@@ -50,8 +50,7 @@ class MultiTaskAgent :
         device = torch.device('cpu' if cfg.device == 'cpu' else 'cuda')
         actor_critic.model_to_device(device)
 
-        checkpoints = LearnerWorker.get_checkpoints(LearnerWorker.checkpoint_dir(
-                                                    cfg, i))
+        checkpoints = LearnerWorker.get_checkpoints(LearnerWorker.checkpoint_dir(cfg, i))
         checkpoint_dict = LearnerWorker.load_checkpoint(checkpoints, device)
         actor_critic.load_state_dict(checkpoint_dict['model'])
         return actor_critic
@@ -85,7 +84,8 @@ class MultiTaskAgent :
     def select_task(self, policy_outputs) :
         values = np.zeros(6)
         for i in range(6) :
-            values[i] = policy_outputs[i].values
+            values[i] = policy_outputs[i].values.item()
+        print(values, np.argmax(values))
         actions = policy_outputs[np.argmax(values)].actions
         rnn_states = policy_outputs[np.argmax(values)].rnn_states
         return actions, rnn_states
@@ -130,5 +130,6 @@ for key, x in obs_torch.items():
 policy_outputs = a.forward_models(obs_torch, rnn_states)
 
 #print(a.models)
-print(a.select_task(policy_outputs))
+for i in range(6) :
+    print(a.select_task(policy_outputs))
 """

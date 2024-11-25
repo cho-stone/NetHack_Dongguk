@@ -1,3 +1,4 @@
+"""
 import os
 import sys
 import time
@@ -25,11 +26,17 @@ from sample_factory.algorithms.utils.multi_agent_wrapper import (
     MultiAgentWrapper)
 from sample_factory.envs.create_env import create_env
 from sample_factory.utils.utils import log, AttrDict, str2bool
+"""
+
+import torch
+import numpy as np
+from sample_factory.algorithms.appo.learner import LearnerWorker
+from sample_factory.algorithms.appo.model import create_actor_critic
 
 class MultiTaskAgent :
 
     def __init__(self, cfg, env) :
-        self.models = []
+        self.models = np.empty(6, dtype=object)
         self.env = env
         self.cfg = cfg
         self.get_models()
@@ -61,22 +68,30 @@ class MultiTaskAgent :
         5 : pet
         """
         for i in range(6) :
-            self.models.append(self.load_model(self.cfg, i))
+            self.models[i] = self.load_model(self.cfg, i)
             print(i, " model load")
-    """
+    
     def forward_models(self, obs_torch, rnn_states) :
-        policy_outputs = []
+        policy_outputs = np.empty(6, dtype=object)
         for i in range(6) :
-            policy_outputs[i] = self.models(obs_torch, rnn_states)
+            policy_outputs[i] = self.models[i](obs_torch, rnn_states)
         return policy_outputs
+
     #load calibrating mlp
 
     #calculate calibrated reward
 
     #task selector
     def select_task(self, policy_outputs) :
+        values = np.zeros(6)
         for i in range(6) :
-            values[i] = policy_outputs[i]
+            values[i] = policy_outputs[i].values
+        actions = policy_outputs[np.argmax(values)].actions
+        rnn_states = policy_outputs[np.argmax(values)].rnn_states
+        return actions, rnn_states
+
+    def get_outputs(self, obs_torch, rnn_states) :
+        return self.select_task(self.forward_models(obs_torch, rnn_states))
 """
 def add_extra_params(parser):
     p = parser
@@ -112,5 +127,8 @@ rnn_states = torch.zeros(
 obs_torch = AttrDict(transform_dict_observations(obs))
 for key, x in obs_torch.items():
     obs_torch[key] = torch.from_numpy(x).to(device).float()
+policy_outputs = a.forward_models(obs_torch, rnn_states)
 
-print(a.models)
+#print(a.models)
+print(a.select_task(policy_outputs))
+"""

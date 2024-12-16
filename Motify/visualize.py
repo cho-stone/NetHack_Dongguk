@@ -27,6 +27,7 @@ from sample_factory.algorithms.utils.multi_agent_wrapper import (
     MultiAgentWrapper)
 from sample_factory.envs.create_env import create_env
 from sample_factory.utils.utils import log, AttrDict, str2bool
+from sample_factory.algorithms.utils.action_distributions import sample_actions_log_probs
 
 
 def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
@@ -46,9 +47,7 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
     # but we can wrap a single-agent env into one of these like this
     env = MultiAgentWrapper(env)
 
-    # 6개의 모델을 담기위한 actor_critics배열 선언
     actor_critics = []
-    # 반복하여 하나씩 배열에 로드
     for i in range(6) :
         # Create actor critic
         actor_critic = create_actor_critic(
@@ -109,6 +108,8 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
 
     episode_rewards = [deque([], maxlen=100) for _ in range(env.num_agents)]
     episode_reward = np.zeros(env.num_agents)
+    episode_rewards_list = []
+    episode_score_list = []
     finished_episode = [False] * env.num_agents
 
     episode_msgs = {}
@@ -131,20 +132,43 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
             for key, x in obs_torch.items():
                 obs_torch[key] = torch.from_numpy(x).to(device).float()
 
-            # policy_output을 담기위한 배열 선언
             policys = []
-            # 각 model의 policy_output 담기
             for i in range(6) :
                 policys.append(actor_critics[i](obs_torch, rnn_states))
 
-            # 랜덤으로 행동을 선택하기 위한 변수
-            n = random.randrange(0,6)
+
+            #############avg
+            #sum_tensor = torch.sum(torch.stack([policys[1].action_distribution.probs
+            #                                    , policys[2].action_distribution.probs, policys[3].action_distribution.probs
+            #                                    , policys[4].action_distribution.probs, policys[5].action_distribution.probs]), dim=0)
+            #
+            #dis_mean = torch.div(sum_tensor, 5)
+            #
+            #actions = torch.multinomial(dis_mean, 1, True).squeeze(dim=-1)
+            ##################
+
+
+            ##############stand
+            #actions = policys[0].actions
+            ###############
+
+
+            ##############random
+            #n = random.randrange(1,6)
+            #actions = policys[n].actions
+            #################
+
+            
+            ###################values
+            values = np.zeros(5)
+            for i in range(1, 6) :
+                values[i-1] = policys[i].values.item()
+            actions = policys[np.argmin(values)].actions
+            ####################
 
             # sample actions from the distribution by default
-            # 랜덤으로 선택된 action을 담아서 실행
-            actions = policys[n].actions
             actions = actions.cpu().numpy()
-            rnn_states = policys[n].rnn_states
+            rnn_states = policys[0].rnn_states
 
             obs, rew, done, infos = env.step(actions)
 
@@ -171,6 +195,10 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
                 finished_episode[agent_i] = True
                 episode_rewards[agent_i].append(episode_reward[agent_i])
 
+                # 에피소드 보상을 리스트에 추가
+                episode_rewards_list.append(episode_reward[agent_i])
+                episode_score_list.append(infos[0].get('score', None))
+
                 print("\n" * 29)
                 print("===============Top messages=================")
                 # Sort the top 100 messages from the current episode
@@ -195,15 +223,16 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
                     dtype=torch.float32, 
                     device=device
                 )
-                input("Press 'Enter' to continue...")
+                #input("Press 'Enter' to continue...")
 
+            cfg.render = False
             if cfg.render:
                 # Print timestep stats
                 print(f"Timestep: {num_frames} Reward: {rew[0]:.3f} "
                       f"Return: {episode_reward[0]:.3f} "
                       f"Intrinsic reward: {int_reward:.3f} "
                       f"Norm Intrinsic reward: {norm_int_reward:.3f} "
-                      f"action select: {n}      ")
+                      f"action select: none      ")
 
                 # Render environment
                 env.render()
@@ -214,6 +243,11 @@ def enjoy(cfg, max_num_frames=1e6, target_num_episodes=100):
                 # Pause rendering a certain amount
                 time.sleep(cfg.sleep)
 
+    # 100개 에피소드 평균 출력
+    avg_reward = np.mean(episode_rewards_list)
+    avg_score = np.mean(episode_score_list)
+    print(f"Last 100 episodes average reward: {avg_reward:.3f}")
+    print(f"Last 100 episodes average score: {avg_score:.3f}")
     env.close()
 
     return ExperimentStatus.SUCCESS, np.mean(episode_rewards)

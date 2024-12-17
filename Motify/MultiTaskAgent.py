@@ -57,7 +57,7 @@ class MultiTaskAgent :
         device = torch.device('cpu' if self.cfg.device == 'cpu' else 'cuda')
         for i in range(task_number):
             calibrator = create_calibrator(self.cfg, self.env.observation_space)
-            calibrator.load_state_dict(torch.load(f'train_dir/calibrator_dir/checkpoint_p{i}.pth', map_location=device))
+            calibrator.load_state_dict(torch.load(f'train_dir/calibrator_dir/c{i}/checkpoint_p{0}.pth', map_location=device))
             calibrator.to(device)
             self.calibrators[i] = calibrator
             print(f"Calibrator {i} loaded")

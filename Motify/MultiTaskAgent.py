@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-import random
+from calibrator import create_calibrator
 from sample_factory.algorithms.appo.learner import LearnerWorker
 from sample_factory.algorithms.appo.model import create_actor_critic
 
@@ -12,8 +12,11 @@ class MultiTaskAgent :
         self.get_models()
 
         self.policy_outputs = np.empty(5, dtype=object)
-        self.values =np.zeros(5)
         self.rnn_states = np.empty(5, dtype=object)
+
+        self.new_distributions = np.empty(5)
+        self.corrected_rate = np.empty(5)
+        self.calibrators = np.empty(5, dtype=object)
 
     def load_model(self, cfg, i) :
         actor_critic = create_actor_critic(
@@ -41,8 +44,8 @@ class MultiTaskAgent :
         5 : pet
         """
         for i in range(5) :
-            self.models[i] = self.load_model(self.cfg, i+1)
-            print(i+1, " model load")
+            self.models[i] = self.load_model(self.cfg, i)
+            print(i, " model load")
     
     def forward_models(self, obs_torch, rnn_states) :
         for i in range(5) :
@@ -50,16 +53,50 @@ class MultiTaskAgent :
         return self.policy_outputs
 
     #load calibrating mlp
+    def load_calibrator(self, task_number):
+        device = torch.device('cpu' if self.cfg.device == 'cpu' else 'cuda')
+        for i in range(task_number):
+            calibrator = create_calibrator(self.cfg, self.env.observation_space)
+            calibrator.load_state_dict(torch.load(f'train_dir/calibrator_dir/checkpoint_p{i}.pth', map_location=device))
+            calibrator.to(device)
+            self.calibrators[i] = calibrator
+            print(f"Calibrator {i} loaded")
 
-    #calculate calibrated reward
+    def calculate_corrected_rates(self, obs_torch, task_number):
+        self.corrected_rate = np.empty(task_number, dtype=object)
+        for i in range(task_number):
+            with torch.no_grad():
+                hypothesis = self.calibrators[i](obs_torch)
+                corrected_distribution = torch.softmax(hypothesis, dim=-1)
+                self.corrected_rate[i] = corrected_distribution
 
-    #task selector
-    def select_task(self, policy_outputs) :
-        for i in range(5) :
-            self.values[i] = policy_outputs[i].values.item()
+    #task selector - modified
+    def select_task(self, policy_outputs, obs_torch) :
+        max_idx = -1
+        max_value = float('-inf')
+        task_number = 2 #task 갯수
+
+        #mlp불러오는 코드 추가, 보정률 담기
+        self.load_calibrator()
+        self.calculate_corrected_rates(obs_torch, task_number)
+
+        #분포에 보정률 곱하기
+        for i in range(task_number) :
+            original_probs = policy_outputs[i].action_distribution.probs
+            self.new_distributions[i] = torch.mul(original_probs, self.corrected_rate[i])
             self.rnn_states[i] = policy_outputs[i].rnn_states
 
-        actions = policy_outputs[np.argmax(self.values)].actions
+        #보정률을 곱한 분포에서 각 최댓값의 index 찾기
+        for i, tensor in enumerate(self.new_distributions) :
+            curr_value = torch.max(tensor).item()
+            curr_idx = torch.argmax(tensor).item()
+
+            if curr_value > max_value:
+                max_value = curr_value
+                max_idx = int(curr_idx)
+        
+        #tensor로 변환하여 행동에 넣기
+        actions = torch.tensor([max_idx], device='cuda:0')
         return actions, self.rnn_states
 
     def get_outputs(self, obs_torch, rnn_states) :

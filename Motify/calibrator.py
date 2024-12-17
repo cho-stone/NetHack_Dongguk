@@ -8,6 +8,7 @@ import numpy as np
 import scipy
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 import rl_baseline.tasks_nle
 import rl_baseline.encoders_nle
@@ -25,7 +26,7 @@ from sample_factory.utils.utils import log, AttrDict, str2bool
 from sample_factory.algorithms.appo.model_utils import create_encoder, normalize_obs
 from sample_factory.utils.timing import Timing
 
-class Calibrator(nn.module):
+class Calibrator(nn.Module):
     def __init__(self, make_encoder, cfg):
         super().__init__()
         self.cfg = cfg
@@ -37,21 +38,27 @@ class Calibrator(nn.module):
             nn.ReLU(inplace=True),
             nn.Linear(256, 64),
             nn.ReLU(inplace=True),
-            nn.Linear(64, 1),
+            nn.Linear(64, 23)
             )
-    
-    def forward(self, x):
-        x = normalize_obs(x, self.cfg)
-        x = encoder(x)
+    def forward_head(self, obs_dict, normalize=True):
+        if normalize:
+            normalize_obs(obs_dict, self.cfg)
+        x = self.encoder(obs_dict)
+        return x
+    def forward(self, obs_dict):
+        x = self.forward_head(obs_dict)
         x = self.mlp(x)
         return x
 
-def create_calibrator(cfg, obs_space):
+def create_calibrator(cfg, obs_space, timing = None):
+    if timing is None:
+        timing = Timing()
+
     def make_encoder():
         return create_encoder(cfg, obs_space, timing)
     return Calibrator(make_encoder, cfg)
 
-def train() :
+def train(cfg) :
     cfg = load_from_checkpoint(cfg)
 
     cfg.env_frameskip = 1
@@ -73,6 +80,11 @@ def train() :
     checkpoint_dict = LearnerWorker.load_checkpoint(checkpoints, device)
     actor_critic.load_state_dict(checkpoint_dict['model'])
 
+    calibrator = create_calibrator(cfg, env.observation_space)
+    calibrator.to(device)
+
+    max_score = 100
+    finished_episode = [False] * env.num_agents
     episode_num_frames = 0
     num_frames = 0
     num_episodes = 0
@@ -85,46 +97,65 @@ def train() :
         device=device
     )
 
-    #optimizer = torch.optim.Adam(calibrator.parameters(), lr=0.001)
+    calibrator_dir = "train_dir/calibrator_dir"
+    os.makedirs(calibrator_dir, exist_ok=True)
+    i=0
+    optimizer = torch.optim.Adam(calibrator.parameters(), lr=0.001)
     #score = 0
-    while num_frames < max_num_frames and num_episodes < target_num_episodes:
+
+    max_num_frames = 1e6
+    while num_frames < max_num_frames:
         with torch.no_grad():
             obs_torch = AttrDict(transform_dict_observations(obs))
+            print("frame : ", num_frames)
 
             for key, x in obs_torch.items():
                 obs_torch[key] = torch.from_numpy(x).to(device).float()
-            
+
             policy_outputs = actor_critic(obs_torch, rnn_states)
+            actions = policy_outputs.actions
+            action_distribution = policy_outputs.action_distribution.probs[0][actions]
             actions = actions.cpu().numpy()
 
             obs, rew, done, infos = env.step(actions)
 
-            """
-            new_score = observation[self._blstats_index][nethack.NLE_BL_SCORE]
-            output = (score - new_score) / max_score / action_distribution.probs[actions]
+        new_score = infos[0].get('score', None)
+        if episode_num_frames > 0:
+            score_diff = new_score - score
+            score_diff = 100 if score_diff > 100 else score_diff if score_diff > 0 else 0  
+            output = torch.zeros(23)
+            output[actions] = score_diff / max_score / action_distribution
+            output = output.unsqueeze(0).to(device)
             #input: obs_torch, output: output
             #calibrator train
-            hypothesis = calibarator(obs_torch)
+            hypothesis = calibrator(obs_torch)
             cost = F.cross_entropy(input=hypothesis, target=output)
             optimizer.zero_grad()
             cost.backward()
             optimizer.step()
-            score = new_score
-            """
-            
-            num_frames += 1
-            episode_num_frames += 1
+        score = new_score
 
-            if done[agent_i]:
-                finished_episode[agent_i] = True
-                episode_num_frames = 0
-                num_episodes += 1
-                rnn_states[agent_i] = torch.zeros(
-                    [get_hidden_size(cfg)], 
-                    dtype=torch.float32, 
-                    device=device
-                )
-                input("Press 'Enter' to continue...")
+        
+        num_frames += 1
+        episode_num_frames += 1
+
+        if done[agent_i]:
+            finished_episode[agent_i] = True
+            episode_num_frames = 0
+            num_episodes += 1
+            rnn_states[agent_i] = torch.zeros(
+                [get_hidden_size(cfg)], 
+                dtype=torch.float32, 
+                device=device
+            )
+        
+        if (num_frames%100 == 0):
+            i+=1
+            i = 0 if i>4 else i
+
+            save_path = os.path.join(calibrator_dir, f'checkpoint_p{i}.pth')
+            torch.save(calibrator.state_dict(), save_path)
+            print("sdfasdf")
     env.close()
 
     return ExperimentStatus.SUCCESS
